@@ -1,5 +1,6 @@
 #include<stdio.h>
 int main()
 {
-    printf("readme\n");
+    printf("r\n");
 }
+
