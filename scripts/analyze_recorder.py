@@ -34,8 +34,12 @@ def main() -> None:
     recorders = exp.list_recorders()
     if not recorders:
         raise SystemExit("未找到任何 recorder, 请先运行 make train")
-    rec = max(recorders.values(), key=lambda r: str(getattr(r, "start_time", "") or ""))
-    print(f"使用 recorder: {rec.id}  ({len(recorders)} 个候选)")
+    # 优先取状态为 FINISHED 的 recorder(排除崩溃残留 run), 再按开始时间取最新
+    finished = [r for r in recorders.values()
+                if "FINISHED" in str(getattr(r, "status", "")).upper()]
+    pool = finished or list(recorders.values())
+    rec = max(pool, key=lambda r: str(getattr(r, "start_time", "") or ""))
+    print(f"使用 recorder: {rec.id}  ({len(finished)}/{len(recorders)} 个为 FINISHED)")
 
     # ---- 逐个加载所有 pkl 产物 ------------------------------------------------
     # qlib Recorder.list_artifacts 返回扁平字符串：顶层含目录裸名（无 is_dir 属性），
