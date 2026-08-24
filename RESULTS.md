@@ -60,6 +60,7 @@
 - **valid 段标签轻微溢出**：训练段末两日的标签窗口跨入验证段（官方示例同款口径），影响可忽略。
 - **indicators 中 pa/pos 恒为 0**：`indicator_analysis_1day.pkl` 的 price-advantage/position 两项诊断指标为 0，属 qlib 指标统计口径问题，不影响主结果（report_normal_1day 中的真实成本与成交记录完整）。
 - **mlflow 兼容性**：mlflow≥3 将本地文件存储置于维护模式，Makefile 已通过 `MLFLOW_ALLOW_FILE_STORE=true` 放行。
+- **数据尾部说明**：本文产物由一次 `--end` 略宽于 `DATA_END` 的抓取生成，日历尾部含 2026-08-24（比复现口径多 1 个交易日，对测试段末端标签影响可忽略）；干净检出按 `make data` 重跑则以 `DATA_END ?= 20260821` 为准。
 
 ## 5. 产物清单
 
