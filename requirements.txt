@@ -1,0 +1,15 @@
+# Qlib 0.9.7 提供 cp311 macOS universal2 轮子(Apple Silicon 可直接安装, 无需编译)
+pyqlib==0.9.7
+
+# 最新版 akshare 要求 Python >= 3.11
+akshare>=1.18
+
+# qlib 0.9.7 的 Cython 扩展基于 numpy 1.x ABI 构建, 必须锁定 numpy<2
+numpy==1.26.4
+
+lightgbm>=4.0
+matplotlib>=3.8
+tqdm>=4.66
+fire>=0.6          # dump_bin.py 的 CLI 依赖
+scipy>=1.11
+pyarrow>=15        # 导出 parquet 用

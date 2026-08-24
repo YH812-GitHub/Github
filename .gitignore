@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# 数据与实验产物 (体积大且可由 make data / make train 再生)
+data/
+mlruns/
+reports/*.log
+reports/*.png
+reports/*.csv
+reports/*.pkl
+
+# 系统 / 编辑器
+.DS_Store
+.idea/
+.vscode/
