@@ -39,10 +39,10 @@ qlib-ashare-starter/
 
 ## 快速开始
 
-环境要求：macOS(Apple Silicon 或 Intel)、[uv](https://github.com/astral-sh/uv)(`brew install uv`)、约 10 分钟。
+环境要求：macOS(Apple Silicon 或 Intel)、[uv](https://github.com/astral-sh/uv)、Homebrew `libomp`(LightGBM 原生库的运行时依赖)、约 10 分钟。
 
 ```bash
-brew install uv            # 若未安装
+brew install uv libomp     # 若未安装(libomp 是 LightGBM macOS 轮子所需的 OpenMP 运行时)
 make setup                 # Python 3.11 venv + 依赖(pyqlib 有预编译轮子, 无需编译)
 make data                  # 下载沪深300+指数日线(~600 次请求, 约5-15分钟)并转 Qlib 格式
 make train                 # Alpha158 + LightGBM 训练 + 样本外回测
