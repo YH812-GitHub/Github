@@ -8,7 +8,7 @@
 #
 # 注意: 数据起始 2020-09-01, 比 train 提前约 4 个月, 用于满足 Alpha158
 #       最长 60 日窗口的回看需求。
-#       market=csi300 使用 instruments/csi300.txt(由 make data 后处理生成,
+#       market=csi300 使用 instruments/csi300.txt(由 make dump 后处理生成,
 #       已剔除基准指数 SH000300, 避免指数混入选股池)。
 # =============================================================================
 qlib_init:
@@ -97,16 +97,17 @@ task:
                 valid: [2025-01-01, 2025-06-30]
                 test:  [2025-07-01, 2026-08-21]
 
-record:
-    - class: SignalRecord
-      module_path: qlib.workflow.record_temp
-      kwargs:
-          dataset: <DATASET>
-    - class: SigAnaRecord
-      module_path: qlib.workflow.record_temp
-      kwargs:
-          ann_scaler: 250
-    - class: PortAnaRecord
-      module_path: qlib.workflow.record_temp
-      kwargs:
-          config: *port_analysis_config
+    # qrun 只消费 config["task"]["record"] —— 必须嵌在 task 下, 与 model/dataset 平级
+    record:
+        - class: SignalRecord
+          module_path: qlib.workflow.record_temp
+          kwargs:
+              dataset: <DATASET>
+        - class: SigAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs:
+              ann_scaler: 250
+        - class: PortAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs:
+              config: *port_analysis_config

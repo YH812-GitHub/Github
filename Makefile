@@ -17,10 +17,11 @@ fetch:
 
 dump:
 	$(PY) scripts/dump_bin.py dump_all \
-		--csv_path data/csv_raw \
+		--data_path data/csv_raw \
 		--qlib_dir data/qlib_data/cn_data \
-		--include_fields open,close,high,low,volume,factor,vwap \
-		--exclude_fields symbol
+		--include_fields open,close,high,low,volume,factor,vwap
+	@grep -v "^SH000300" data/qlib_data/cn_data/instruments/all.txt > data/qlib_data/cn_data/instruments/csi300.txt
+	@echo "股票池: csi300.txt 共 $$(wc -l < data/qlib_data/cn_data/instruments/csi300.txt | tr -d ' ') 只(已剔除基准指数)"
 
 data: fetch dump
 

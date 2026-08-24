@@ -30,7 +30,7 @@ def main() -> None:
     recorders = exp.list_recorders()
     if not recorders:
         raise SystemExit("未找到任何 recorder, 请先运行 make train")
-    rec = max(recorders.values(), key=lambda r: getattr(r, "start_time", None) or "")
+    rec = max(recorders.values(), key=lambda r: str(getattr(r, "start_time", "") or ""))
     print(f"使用 recorder: {rec.id}  ({len(recorders)} 个候选)")
 
     # ---- 逐个加载所有 pkl 产物 ------------------------------------------------
@@ -40,8 +40,10 @@ def main() -> None:
         name = str(path)
         if not name.endswith(".pkl"):
             continue
-        local = rec.download_artifact(name) if hasattr(rec, "download_artifact") else None
         try:
+            local = None
+            if hasattr(rec, "download_artifact"):
+                local = rec.download_artifact(name)
             if local is not None:
                 with open(local, "rb") as f:
                     objs[name] = pickle.load(f)
@@ -74,9 +76,11 @@ def main() -> None:
             break
 
     # ---- IC 汇总 ---------------------------------------------------------------
+    # 文件名去掉 .pkl 后必须以 ic/ric 结尾, 防止 indicator_* 这类名字被子串误匹配
     lines = []
     for name, obj in objs.items():
-        if isinstance(obj, (pd.DataFrame, pd.Series)) and "ic" in name.lower():
+        if isinstance(obj, (pd.DataFrame, pd.Series)) \
+                and name.lower().removesuffix(".pkl").endswith(("ic", "ric")):
             s = obj.iloc[:, 0] if isinstance(obj, pd.DataFrame) else obj
             try:
                 mean, std = float(s.mean()), float(s.std())
@@ -96,8 +100,9 @@ def main() -> None:
             curve = obj.rename(columns={"return": "strategy"})
             break
         if isinstance(obj, pd.DataFrame) and {"return"} <= set(obj.columns) \
-                and "account" not in obj.columns[:2]:
+                and "account" not in list(obj.columns[:2]):
             curve = obj
+            break
     if curve is not None and "strategy" in curve.columns:
         fig, ax = plt.subplots(figsize=(11, 5.5))
         (1 + curve["strategy"].fillna(0)).cumprod().plot(ax=ax, lw=1.6, label="Strategy(Topk30)")
