@@ -1,2 +1,1 @@
-sig_analysis/ic.pkl: mean=-0.0161  std=0.1996  ICIR=-0.081  IC>0占比=46.1%
-sig_analysis/ric.pkl: mean=+0.0147  std=0.2095  ICIR=+0.070  IC>0占比=52.9%
+(未找到 IC 对象)
