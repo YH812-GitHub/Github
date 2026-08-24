@@ -37,6 +37,7 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "data" / "csv_raw"
 _print_lock = threading.Lock()
+_JS_LOCK = threading.Lock()  # 保护 akshare 内部的 py_mini_racer(V8) 初始化(非线程安全)
 
 
 def log(msg: str) -> None:
@@ -61,6 +62,45 @@ def _retry(fn, tries: int = 3, base: float = 2.0):
             last = e
             time.sleep(base * (i + 1))
     raise RuntimeError(f"重试{tries}次仍失败: {last}")
+
+
+# --------------------------------------------------------------------------- #
+# 数据源探测与备用源(东财被限流时自动降级: 新浪 → 腾讯)
+# --------------------------------------------------------------------------- #
+_EM_STATE: bool | None = None
+
+
+def _em_available() -> bool:
+    """启动时探测一次东方财富接口是否可用, 结果进程内缓存。"""
+    global _EM_STATE
+    if _EM_STATE is not None:
+        return _EM_STATE
+    today = dt.date.today().strftime("%Y%m%d")
+    try:
+        df = ak.stock_zh_a_hist(symbol="600519", period="daily",
+                                start_date=(dt.date.today() - dt.timedelta(days=20)).strftime("%Y%m%d"),
+                                end_date=today, adjust="")
+        _EM_STATE = df is not None and not df.empty
+    except Exception:  # noqa: BLE001
+        _EM_STATE = False
+    log("[provider] 东方财富接口 " + ("可用" if _EM_STATE
+        else "不可用(疑似限流), 本次自动切换 新浪/腾讯 备用源"))
+    return _EM_STATE
+
+
+def _exchange_prefix(code: str) -> str:
+    """6 位代码 → 新浪/腾讯风格的小写交易所前缀。"""
+    return {"6": "sh", "9": "sh", "0": "sz", "3": "sz",
+            "4": "bj", "8": "bj"}.get(code[:1], "sz")
+
+
+def _standardize(df: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
+    out = pd.DataFrame(index=pd.to_datetime(df[mapping.get("index", "日期")]))
+    for src, dst in mapping.items():
+        if dst == "index":
+            continue
+        out[dst] = pd.to_numeric(df[_col(df, src)], errors="coerce").to_numpy()
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -97,21 +137,46 @@ def to_symbol(code: str) -> str:
 # --------------------------------------------------------------------------- #
 # 行情下载
 # --------------------------------------------------------------------------- #
-def _stock_history(code: str, start: str, end: str, adjust: str) -> pd.DataFrame:
-    """个股日线(东财)。返回以 date 为索引的标准化 DataFrame。"""
+_STOCK_MAP = {"index": "日期", "开盘": "open", "最高": "high", "最低": "low",
+              "成交量": "volume", "成交额": "amount", "收盘": "close"}
+
+
+def _em_history(code: str, start: str, end: str, adjust: str) -> pd.DataFrame:
     df = ak.stock_zh_a_hist(symbol=code, period="daily",
                             start_date=start, end_date=end, adjust=adjust)
     if df is None or df.empty:
-        raise ValueError(f"空数据({adjust})")
-    out = pd.DataFrame(index=pd.to_datetime(df[_col(df, "日期")]))
-    for k, v in (("开盘", "open"), ("最高", "high"), ("最低", "low"),
-                 ("成交量", "volume"), ("成交额", "amount"), ("收盘", "close")):
-        out[v] = pd.to_numeric(df[_col(df, k)], errors="coerce")
-    out = (out.dropna(subset=["open", "close"])
-              .sort_index().loc[lambda d: ~d.index.duplicated()])
-    if out.empty:
-        raise ValueError(f"清洗后为空({adjust})")
+        raise ValueError(f"东财空数据({adjust})")
+    return _standardize(df, _STOCK_MAP)
+
+
+def _sina_history(code: str, start: str, end: str, adjust: str) -> pd.DataFrame:
+    # akshare 新浪接口每次调用都会创建 py_mini_racer(V8) 实例,
+    # 多线程并发初始化 V8 会直接 FATAL 崩溃(address_pool_manager), 故全局串行化
+    with _JS_LOCK:
+        df = ak.stock_zh_a_daily(symbol=_exchange_prefix(code) + code,
+                                 start_date=start, end_date=end, adjust=adjust)
+    if df is None or df.empty:
+        raise ValueError(f"新浪空数据({adjust})")
+    out = pd.DataFrame(index=pd.to_datetime(df["date"]))
+    for c in ("open", "high", "low", "close", "volume", "amount"):
+        out[c] = pd.to_numeric(df[c], errors="coerce").to_numpy()
     return out
+
+
+def _tx_history(code: str, start: str, end: str, adjust: str) -> pd.DataFrame:
+    df = ak.stock_zh_a_hist_tx(symbol=_exchange_prefix(code) + code,
+                               start_date=start, end_date=end, adjust=adjust)
+    if df is None or df.empty:
+        raise ValueError(f"腾讯空数据({adjust})")
+    out = pd.DataFrame(index=pd.to_datetime(df["date"]))
+    for c in ("open", "high", "low", "close", "volume", "amount"):
+        out[c] = pd.to_numeric(df[c], errors="coerce").to_numpy()
+    return out
+
+
+def _providers() -> list:
+    """供应商候选列表(东财可用则置顶)。hfq/raw 必须取自同一供应商。"""
+    return ([_em_history] if _em_available() else []) + [_sina_history, _tx_history]
 
 
 def _smart_vwap(amount: pd.Series, volume: pd.Series,
@@ -128,9 +193,29 @@ def _smart_vwap(amount: pd.Series, volume: pd.Series,
 
 
 def fetch_one(code: str, start: str, end: str) -> tuple[str, pd.DataFrame]:
-    hfq = _retry(lambda: _stock_history(code, start, end, adjust="hfq"))
-    time.sleep(0.12)
-    raw = _retry(lambda: _stock_history(code, start, end, adjust=""))
+    # 同源取数: hfq 与 raw 必须来自同一供应商。若各自独立走降级链,
+    # 东财间歇性限流时会出现"新浪 hfq / 东财 raw"的跨厂商 factor,
+    # 导致 $vwap 与后复权 OHLC 尺度系统性错位且无任何报错(静默污染)。
+    hfq = raw = None
+    last = None
+    for fn in _providers():
+        try:
+            hfq = fn(code, start, end, "hfq")
+            time.sleep(0.12)
+            raw = fn(code, start, end, "")
+            break
+        except Exception as e:  # noqa: BLE001
+            hfq = raw = None
+            last = e
+            log(f"    [fallback] {code} {fn.__name__} 整组失败: {str(e)[:80]}")
+    if hfq is None or raw is None or hfq.empty or raw.empty:
+        raise RuntimeError(f"{code} 全部数据源失败: {last}")
+    hfq = (hfq.dropna(subset=["open", "close"])
+              .sort_index().loc[lambda d: ~d.index.duplicated()])
+    raw = (raw.dropna(subset=["close"])
+              .sort_index().loc[lambda d: ~d.index.duplicated()])
+    if hfq.empty or raw.empty:
+        raise ValueError(f"{code} 清洗后为空")
 
     factor = hfq["close"] / raw["close"].reindex(hfq.index).ffill()
     vwap = (_smart_vwap(raw["amount"], raw["volume"], raw["low"], raw["high"])
@@ -150,23 +235,50 @@ def fetch_one(code: str, start: str, end: str) -> tuple[str, pd.DataFrame]:
 
 
 def fetch_index(start: str, end: str) -> pd.DataFrame:
-    """沪深300 指数日线(作为回测基准 SH000300)。"""
-    def _pull():
+    """沪深300 指数日线(作为回测基准 SH000300)。优先东财, 限流时降级新浪。"""
+    def _pull_em():
         df = ak.index_zh_a_hist(symbol="000300", period="daily",
                                 start_date=start, end_date=end)
         if df is None or df.empty:
             raise ValueError("指数空数据")
-        return df
-    df = _retry(_pull, tries=5)
-    out = pd.DataFrame(index=pd.to_datetime(df[_col(df, "日期")]))
-    for k, v in (("开盘", "open"), ("最高", "high"), ("最低", "low"),
-                 ("成交量", "volume"), ("成交额", "amount"), ("收盘", "close")):
-        out[v] = pd.to_numeric(df[_col(df, k)], errors="coerce")
-    out = out.sort_index().loc[lambda d: ~d.index.duplicated()]
+        out = pd.DataFrame(index=pd.to_datetime(df[_col(df, "日期")]))
+        for k, v in (("开盘", "open"), ("最高", "high"), ("最低", "low"),
+                     ("成交量", "volume"), ("成交额", "amount"), ("收盘", "close")):
+            out[v] = pd.to_numeric(df[_col(df, k)], errors="coerce").to_numpy()
+        return out.sort_index().loc[lambda d: ~d.index.duplicated()]
+
+    def _pull_sina():
+        df = ak.stock_zh_index_daily(symbol="sh000300")
+        if df is None or df.empty:
+            raise ValueError("指数空数据(新浪)")
+        m = (pd.to_datetime(df["date"]) >= pd.Timestamp(start)) & \
+            (pd.to_datetime(df["date"]) <= pd.Timestamp(end))
+        df = df.loc[m]
+        if df.empty:
+            raise ValueError("指数区间为空(新浪)")
+        out = pd.DataFrame(index=pd.to_datetime(df["date"]))
+        for c in ("open", "high", "low", "close", "volume"):
+            out[c] = pd.to_numeric(df[c], errors="coerce").to_numpy()
+        return out.sort_index().loc[lambda d: ~d.index.duplicated()]
+
+    try:
+        if _em_available():
+            out = _retry(_pull_em, tries=5)
+        else:
+            raise RuntimeError("东财不可用")
+    except Exception as e:  # noqa: BLE001
+        log(f"    [fallback] 指数改用新浪源 (东财失败: {str(e)[:80]})")
+        out = _retry(_pull_sina, tries=5)
+
+    vwap = (_smart_vwap(out["amount"], out["volume"], out["low"], out["high"])
+            if "amount" in out.columns else None)
+    if vwap is None or vwap.isna().all():  # 新浪指数无成交额: 以典型价 (H+L+2C)/4 近似, 仅作基准参考
+        log("    [warn] 该指数源无成交额, vwap 用典型价近似")
+        vwap = (out["high"] + out["low"] + 2 * out["close"]) / 4
     res = pd.DataFrame({
         "open": out["open"], "high": out["high"], "low": out["low"],
         "close": out["close"], "volume": out["volume"], "factor": 1.0,
-        "vwap": _smart_vwap(out["amount"], out["volume"], out["low"], out["high"]),
+        "vwap": vwap,
     }).round(6)
     res.index.name = "date"
     return res
@@ -185,6 +297,14 @@ def main() -> None:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     codes = get_csi300_codes()
     log(f"[1/2] 共获取沪深300成分 {len(codes)} 只, 开始下载 {args.start}~{args.end} 日线...")
+
+    # 主线程预初始化: V8(mini_racer) 首次初始化 + 数据源探测, 均只做一次, 避免多线程竞态
+    try:
+        import py_mini_racer
+        py_mini_racer.MiniRacer().eval("1+1")
+    except Exception:  # noqa: BLE001
+        pass
+    _em_available()
 
     ok, failed = [], []
     with cf.ThreadPoolExecutor(max_workers=args.workers) as pool:
