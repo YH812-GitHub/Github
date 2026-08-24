@@ -8,12 +8,14 @@
 #
 # 注意: 数据起始 2020-09-01, 比 train 提前约 4 个月, 用于满足 Alpha158
 #       最长 60 日窗口的回看需求。
+#       market=csi300 使用 instruments/csi300.txt(由 make data 后处理生成,
+#       已剔除基准指数 SH000300, 避免指数混入选股池)。
 # =============================================================================
 qlib_init:
     provider_uri: "./data/qlib_data/cn_data"
     region: cn
 
-market: &market all
+market: &market csi300
 benchmark: &benchmark SH000300
 
 data_handler_config: &data_handler_config
@@ -39,7 +41,7 @@ data_handler_config: &data_handler_config
 
 port_analysis_config: &port_analysis_config
     executor:
-        class: SimExecutor
+        class: SimulatorExecutor
         module_path: qlib.backtest.executor
         kwargs:
             time_per_step: day
@@ -57,7 +59,7 @@ port_analysis_config: &port_analysis_config
         account: 100000000
         benchmark: *benchmark
         exchange_kwargs:
-            limit_threshold: 0.095      # 近似A股±10%涨跌停不可成交
+            limit_threshold: 0.095      # 近似涨跌停不可成交(创业板/科创板±20%会被保守误禁, 方向安全)
             deal_price: close
             open_cost: 0.0013           # 买入: 佣金+滑点
             close_cost: 0.0023          # 卖出: 佣金+印花税+滑点
@@ -97,14 +99,14 @@ task:
 
 record:
     - class: SignalRecord
-      module_path: qlib.workflow.record_gen
+      module_path: qlib.workflow.record_temp
       kwargs:
           dataset: <DATASET>
     - class: SigAnaRecord
-      module_path: qlib.workflow.record_gen
+      module_path: qlib.workflow.record_temp
       kwargs:
           ann_scaler: 250
     - class: PortAnaRecord
-      module_path: qlib.workflow.record_gen
+      module_path: qlib.workflow.record_temp
       kwargs:
           config: *port_analysis_config
