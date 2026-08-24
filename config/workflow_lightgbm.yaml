@@ -102,6 +102,7 @@ task:
         - class: SignalRecord
           module_path: qlib.workflow.record_temp
           kwargs:
+              model: <MODEL>          # 缺此行则 SignalRecord(model=None) 静默初始化, generate 时 AttributeError（对照官方 lightgbm Alpha158 模板）
               dataset: <DATASET>
         - class: SigAnaRecord
           module_path: qlib.workflow.record_temp

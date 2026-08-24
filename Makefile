@@ -4,6 +4,10 @@ QRUN := .venv/bin/qrun
 # 数据截止日固定, 保证实验可复现 (如需更新数据改这里或 make fetch DATA_END=YYYYMMDD)
 DATA_END ?= 20260821
 
+# mlflow>=3(pyqlib 传递依赖)将本地文件后端设为维护模式, 而 qrun/qlib 依赖 ./mlruns
+# 文件存储 —— 用 mlflow 官方 opt-out 开关放行(替代方案: requirements 锁 mlflow<3)
+MLFLOW_ENV ?= MLFLOW_ALLOW_FILE_STORE=true
+
 .PHONY: setup fetch dump data train analyze all clean
 
 setup:
@@ -27,10 +31,10 @@ data: fetch dump
 
 train:
 	@mkdir -p reports
-	bash -c 'set -o pipefail; $(QRUN) config/workflow_lightgbm.yaml 2>&1 | tee reports/qrun_output.log'
+	bash -c 'set -o pipefail; $(MLFLOW_ENV) $(QRUN) config/workflow_lightgbm.yaml 2>&1 | tee reports/qrun_output.log'
 
 analyze:
-	$(PY) scripts/analyze_recorder.py
+	$(MLFLOW_ENV) $(PY) scripts/analyze_recorder.py
 
 all: setup data train analyze
 
