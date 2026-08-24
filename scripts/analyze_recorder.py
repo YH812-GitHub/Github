@@ -24,6 +24,10 @@ REPORTS = ROOT / "reports"
 
 def main() -> None:
     REPORTS.mkdir(exist_ok=True)
+    import qlib  # noqa: PLC0415
+
+    # R.get_exp 要求先初始化 qlib（provider_uri 与 workflow_lightgbm.yaml 保持一致）
+    qlib.init(provider_uri=str(ROOT / "data" / "qlib_data" / "cn_data"), region="cn")
     from qlib.workflow import R  # noqa: PLC0415
 
     exp = R.get_exp(experiment_name="workflow")
@@ -34,23 +38,34 @@ def main() -> None:
     print(f"使用 recorder: {rec.id}  ({len(recorders)} 个候选)")
 
     # ---- 逐个加载所有 pkl 产物 ------------------------------------------------
+    # qlib Recorder.list_artifacts 返回扁平字符串：顶层含目录裸名（无 is_dir 属性），
+    # 子目录查询返回全相对路径，对文件路径查询返回 [] —— 据此做防御式下钻
     objs: dict[str, object] = {}
-    for art in rec.list_artifacts():
-        path = art.path if hasattr(art, "path") else art
-        name = str(path)
-        if not name.endswith(".pkl"):
-            continue
-        try:
-            local = None
-            if hasattr(rec, "download_artifact"):
-                local = rec.download_artifact(name)
-            if local is not None:
-                with open(local, "rb") as f:
-                    objs[name] = pickle.load(f)
+    seen: set[str] = set()
+
+    def _walk_and_load(artifact_path: str | None) -> None:
+        for art in rec.list_artifacts(artifact_path):
+            name = str(art)
+            if name in seen:
+                continue
+            if name.endswith(".pkl"):
+                seen.add(name)
+                try:
+                    local = None
+                    if hasattr(rec, "download_artifact"):
+                        local = rec.download_artifact(name)
+                    if local is not None:
+                        with open(local, "rb") as f:
+                            objs[name] = pickle.load(f)
+                    else:
+                        objs[name] = rec.load_object(name)
+                except Exception as e:  # noqa: BLE001
+                    print(f"  [跳过] {name}: {e}")
             else:
-                objs[name] = rec.load_object(name)
-        except Exception as e:  # noqa: BLE001
-            print(f"  [跳过] {name}: {e}")
+                seen.add(name)          # 目录（或无法下钻的名字）：标记后尝试下钻
+                _walk_and_load(name)    # 对文件路径下钻会得到 []，天然终止
+
+    _walk_and_load(None)
 
     print("\n=== 实验产物清单 ===")
     for name, obj in objs.items():
