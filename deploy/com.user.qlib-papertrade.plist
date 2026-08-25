@@ -5,6 +5,10 @@
   周一~周五 18:00 CST 运行 `make paper`, 日志追加到 paper/launchd.log。
   注意: launchd 不补偿错过的触发——要求当日 Mac 在 18:00 前后处于开机状态。
 
+  异机部署: 本模板含 3 处硬编码路径(/Users/mac/AI/qlib-ashare-starter,
+  ProgramArguments 1 处 + 日志输出 2 处), 换机器请先全局替换为你的项目绝对路径。
+  日志轮转: launchd 自身不轮转, 可配 newsyslog 或定期清理 paper/launchd.log。
+
   安装(两行):
     mkdir -p ~/Library/LaunchAgents paper && cp deploy/com.user.qlib-papertrade.plist ~/Library/LaunchAgents/
     launchctl load ~/Library/LaunchAgents/com.user.qlib-papertrade.plist

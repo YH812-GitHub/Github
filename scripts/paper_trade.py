@@ -72,7 +72,6 @@ def _ml_strategy_factory():
     return load_model()                # 返回 score(end_day) -> Series
 
 
-INITIAL_STATE_TMPL = {"positions": {}, "last_processed_date": None}
 
 
 # --------------------------------------------------------------------------- #
@@ -414,9 +413,9 @@ def execute_day(day: pd.Timestamp, scores: pd.Series, real_px: pd.Series,
 # --------------------------------------------------------------------------- #
 # 主流程
 # --------------------------------------------------------------------------- #
-def cmd_init(account: float = ACCOUNT) -> None:
+def cmd_init(account: float = ACCOUNT, strategy: str = "ml_top8") -> None:
     PAPER_DIR.mkdir(exist_ok=True)
-    save_state({"cash": float(account), "account": account,
+    save_state({"cash": float(account), "account": account, "strategy": strategy,
                 "positions": {}, "last_processed_date": None, "prev_snapshot": None})
     for f in (EQUITY_PATH, TRADES_PATH):
         if f.exists():
@@ -496,7 +495,10 @@ def run_daily(args) -> None:
 
     print(f"[3/5] 策略打分 (strategy={state.get('strategy', 'ml_top8')})...")
     days = pending or ([redo_day] if redo_day else [])
-    score = STRATEGIES[state.get("strategy", "ml_top8")]()
+    strat_name = state.get("strategy", "ml_top8")
+    if strat_name not in STRATEGIES:
+        sys.exit(f"未知策略 {strat_name!r}, 可选: {', '.join(STRATEGIES)}")
+    score = STRATEGIES[strat_name]()
     scores_by_day = collect_days(score, days, [])
 
     px_all = real_close_matrix(
@@ -537,7 +539,8 @@ def run_daily(args) -> None:
                              "positions": {k: dict(v) for k, v in state["positions"].items()},
                              "last_processed_date": state["last_processed_date"]}
         new_state, trades, eq_row = execute_day(
-            d, sc, real_px, bench_real, state, bench_base)
+            d, sc, real_px, bench_real, state, bench_base,
+            account=float(state.get("account", ACCOUNT)))   # t11-A: 账户参数必须透传
         overwrite_ledger_day(eq_path, EQUITY_COLS, d.date().isoformat(), [eq_row])
         overwrite_ledger_day(tr_path, TRADES_COLS, d.date().isoformat(), trades)
         state = dict(new_state, prev_snapshot=state_prev_of_day)
@@ -575,6 +578,8 @@ def run_replay(range_str: str, account: float = ACCOUNT,
     print(f"[replay] 区间 {days[0].date()} ~ {days[-1].date()} 共 {len(days)} 个交易日")
 
     print(f"[replay] 策略打分 (strategy={strategy})...")
+    if strategy not in STRATEGIES:
+        sys.exit(f"未知策略 {strategy!r}, 可选: {', '.join(STRATEGIES)}")
     score = STRATEGIES[strategy]()
     scores_by_day = collect_days(score, days, [])
     syms = [ln.split("\t")[0].strip() for ln in
@@ -640,7 +645,7 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.init:
-        cmd_init(account=args.account)
+        cmd_init(account=args.account, strategy=args.strategy)
     elif args.status:
         cmd_status()
     elif args.replay:
