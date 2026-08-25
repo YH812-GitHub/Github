@@ -53,7 +53,26 @@ EQUITY_COLS = ["date", "cash", "market_value", "total", "daily_pnl",
                "cum_pnl", "bench_close", "bench_cum_ret", "excess_cum"]
 TRADES_COLS = ["date", "code", "direction", "shares", "price_real", "cost_fee"]
 
-INITIAL_STATE = {"cash": float(ACCOUNT), "positions": {}, "last_processed_date": None}
+# --------------------------------------------------------------------------- #
+# 策略注册表(t13 A/B 扩展点): name -> factory() -> score(end_day)->Series[instrument]
+# 新策略只需在此登记一个工厂函数, 引擎其余部分(记账/换仓/幂等)完全复用。
+# --------------------------------------------------------------------------- #
+STRATEGIES: dict[str, callable] = {}
+
+
+def register_strategy(name: str):
+    def deco(fn):
+        STRATEGIES[name] = fn
+        return fn
+    return deco
+
+
+@register_strategy("ml_top8")          # 当前唯一实现: Alpha158+LGBM 打分(与回测同口径)
+def _ml_strategy_factory():
+    return load_model()                # 返回 score(end_day) -> Series
+
+
+INITIAL_STATE_TMPL = {"positions": {}, "last_processed_date": None}
 
 
 # --------------------------------------------------------------------------- #
@@ -288,7 +307,8 @@ def fee(direction: str, amount: float) -> float:
 
 
 def execute_day(day: pd.Timestamp, scores: pd.Series, real_px: pd.Series,
-                bench_real: float, state: dict, bench_base: float):
+                bench_real: float, state: dict, bench_base: float,
+                account: float = ACCOUNT):
     """单日: 打分→目标组合→按真实收盘价成交→返回(新状态, trades, equity行)。"""
     positions = {k: dict(v) for k, v in state["positions"].items()}
     cash = float(state["cash"])
@@ -313,7 +333,7 @@ def execute_day(day: pd.Timestamp, scores: pd.Series, real_px: pd.Series,
         px = float(real_px.get(inst, np.nan))
         if px != px:
             continue                                    # 停牌不进目标池
-        if px * LOT > ACCOUNT / TOPK:
+        if px * LOT > account / TOPK:
             if len(seen_unaffordable) < TOPK:
                 seen_unaffordable.append(inst)
             continue
@@ -377,10 +397,10 @@ def execute_day(day: pd.Timestamp, scores: pd.Series, real_px: pd.Series,
     equity_row = {"date": day.date().isoformat(), "cash": round(cash, 2),
                   "market_value": round(market_value, 2), "total": round(total, 2),
                   "daily_pnl": round(daily_pnl, 2),
-                  "cum_pnl": round(total - ACCOUNT, 2),
+                  "cum_pnl": round(total - account, 2),
                   "bench_close": round(bench_real, 4),
                   "bench_cum_ret": round(bench_real / bench_base - 1, 6),
-                  "excess_cum": round((total / ACCOUNT - 1)
+                  "excess_cum": round((total / account - 1)
                                       - (bench_real / bench_base - 1), 6)}
     new_state = {"cash": cash,
                  "positions": {c: {"shares": p["shares"],
@@ -394,13 +414,14 @@ def execute_day(day: pd.Timestamp, scores: pd.Series, real_px: pd.Series,
 # --------------------------------------------------------------------------- #
 # 主流程
 # --------------------------------------------------------------------------- #
-def cmd_init() -> None:
+def cmd_init(account: float = ACCOUNT) -> None:
     PAPER_DIR.mkdir(exist_ok=True)
-    save_state(dict(INITIAL_STATE, positions={}, prev_snapshot=None))
+    save_state({"cash": float(account), "account": account,
+                "positions": {}, "last_processed_date": None, "prev_snapshot": None})
     for f in (EQUITY_PATH, TRADES_PATH):
         if f.exists():
             f.unlink()
-    print(f"账本已初始化: 现金 ¥{ACCOUNT:,}, 空仓。状态文件: {STATE_PATH}")
+    print(f"账本已初始化: 现金 ¥{account:,}, 空仓。状态文件: {STATE_PATH}")
 
 
 def cmd_status() -> None:
@@ -473,9 +494,9 @@ def run_daily(args) -> None:
     if added == 0 and redo_day is None:
         print("[warn] 本次未抓到任何新 bar, 仍将尝试用现有数据处理待处理交易日。")
 
-    print("[3/5] 模型打分...")
+    print(f"[3/5] 策略打分 (strategy={state.get('strategy', 'ml_top8')})...")
     days = pending or ([redo_day] if redo_day else [])
-    score = load_model()
+    score = STRATEGIES[state.get("strategy", "ml_top8")]()
     scores_by_day = collect_days(score, days, [])
 
     px_all = real_close_matrix(
@@ -525,6 +546,7 @@ def run_daily(args) -> None:
     print("[5/5] 完成。今日报告:")
     last = pd.read_csv(EQUITY_PATH).iloc[-1]
     print("=" * 64)
+    acct0 = float(state.get("account", ACCOUNT))
     print(f"交易日 {last['date']}:  总资产 ¥{last['total']:,.0f}"
           f"   今日盈亏 {last['daily_pnl']:+,.0f}"
           f"   累计盈亏 {last['cum_pnl']:+,.0f}")
@@ -536,7 +558,8 @@ def run_daily(args) -> None:
     print("=" * 64)
 
 
-def run_replay(range_str: str) -> None:
+def run_replay(range_str: str, account: float = ACCOUNT,
+               strategy: str = "ml_top8") -> None:
     if ":" not in range_str:
         sys.exit("--replay 格式: START:END, 例 2025-07-01:2026-08-21")
     s, e = (pd.Timestamp(x) for x in range_str.split(":"))
@@ -551,8 +574,8 @@ def run_replay(range_str: str) -> None:
         sys.exit("回放区间内无交易日")
     print(f"[replay] 区间 {days[0].date()} ~ {days[-1].date()} 共 {len(days)} 个交易日")
 
-    print("[replay] 模型打分(一次性算满区间, 逐日切片无未来泄漏)...")
-    score = load_model()
+    print(f"[replay] 策略打分 (strategy={strategy})...")
+    score = STRATEGIES[strategy]()
     scores_by_day = collect_days(score, days, [])
     syms = [ln.split("\t")[0].strip() for ln in
             (ROOT / "data/qlib_data/cn_data/instruments/csi300.txt")
@@ -560,7 +583,8 @@ def run_replay(range_str: str) -> None:
     px_all = real_close_matrix(syms, days[0], days[-1])
     bench_real = real_close_matrix(["SH000300"], days[0], days[-1])["SH000300"]
 
-    state = dict(INITIAL_STATE, positions={}, prev_snapshot=None)
+    state = {"cash": float(account), "account": account,
+             "positions": {}, "last_processed_date": None, "prev_snapshot": None}
     bench_base = float(bench_real.iloc[0])
     eq_rows, tr_rows = [], []
     for i, d in enumerate(days, 1):
@@ -582,12 +606,12 @@ def run_replay(range_str: str) -> None:
     pd.DataFrame(tr_rows, columns=TRADES_COLS).to_csv(
         PAPER_DIR / "replay_trades.csv", index=False)
 
-    totals = [ACCOUNT] + eq_df["total"].tolist()
+    totals = [account] + eq_df["total"].tolist()
     peak, mdd = -np.inf, 0.0
     for v in totals:
         peak = max(peak, v)
         mdd = min(mdd, v / peak - 1)
-    cum_ret = eq_df["total"].iloc[-1] / ACCOUNT - 1
+    cum_ret = eq_df["total"].iloc[-1] / account - 1
     bench_cum = eq_df["bench_cum_ret"].iloc[-1]
     neg_cash_days = int((eq_df["cash"] < -1e-6).sum())
 
@@ -609,14 +633,18 @@ def main() -> None:
     ap.add_argument("--init", action="store_true", help="初始化账本(¥100,000 空仓)")
     ap.add_argument("--status", action="store_true", help="只打印现状不入账")
     ap.add_argument("--replay", metavar="START:END", help="历史区间回放自检(不落正式账本)")
+    ap.add_argument("--strategy", default="ml_top8",
+                    help=f"策略名, 可选: {', '.join(STRATEGIES)} (t13 将新增红利低波质量等)")
+    ap.add_argument("--account", type=int, default=ACCOUNT,
+                    help="账户初始资金(--init 时写入账本; replay 用作回放基数)")
     args = ap.parse_args()
 
     if args.init:
-        cmd_init()
+        cmd_init(account=args.account)
     elif args.status:
         cmd_status()
     elif args.replay:
-        run_replay(args.replay)
+        run_replay(args.replay, account=args.account, strategy=args.strategy)
     else:
         run_daily(None)
 
