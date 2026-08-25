@@ -598,7 +598,8 @@ def run_replay(range_str: str, account: float = ACCOUNT,
             print(f"    [skip] {d.date()} 无打分")
             continue
         new_state, trades, eq_row = execute_day(
-            d, sc, px_all.loc[d], float(bench_real.get(d, np.nan)), state, bench_base)
+            d, sc, px_all.loc[d], float(bench_real.get(d, np.nan)), state, bench_base,
+            account=float(account))          # t14-A 补遗: replay 路径同样透传账户
         eq_rows.append(eq_row)
         tr_rows.extend(trades)
         state = new_state

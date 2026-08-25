@@ -30,6 +30,10 @@
 - **[修复] run_daily 未透传 account（t11-A）**：`--account` 曾只作用于 replay 路径，
   正式盘可负担性仍按默认 10 万计算。已在 execute_day 调用处透传并实测。
 - **[加固] --init 写入 strategy 字段（t11-B）**：正式盘策略切换自此有官方入口。
+- **[修复] replay 路径漏传 account（t14-A 补遗）**：--replay --account N 时汇总统计
+  用对基数但逐日 equity 行（可负担性/cum_pnl/excess_cum）仍按默认 10 万。
+  已透传并以 20 万回放验证：cum_pnl 全行基线正确、excess_cum 自洽、
+  一手成本 12.5k~25k 区间标的新准入并实际成交（SZ300408/SZ300661/SH600183）。
 
 ## 回放自检基线（--replay 2025-07-01:2026-08-21）
 
