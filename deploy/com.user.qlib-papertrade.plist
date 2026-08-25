@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  10 万元模拟盘每日自动运行 (launchd)
+  周一~周五 18:00 CST 运行 `make paper`, 日志追加到 paper/launchd.log。
+  注意: launchd 不补偿错过的触发——要求当日 Mac 在 18:00 前后处于开机状态。
+
+  安装(两行):
+    mkdir -p ~/Library/LaunchAgents paper && cp deploy/com.user.qlib-papertrade.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.user.qlib-papertrade.plist
+  卸载:
+    launchctl unload ~/Library/LaunchAgents/com.user.qlib-papertrade.plist && rm ~/Library/LaunchAgents/com.user.qlib-papertrade.plist
+  手动试跑一次:
+    launchctl start com.user.qlib-papertrade && tail -f paper/launchd.log
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.qlib-papertrade</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/make</string>
+        <string>-C</string>
+        <string>/Users/mac/AI/qlib-ashare-starter</string>
+        <string>paper</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mac/AI/qlib-ashare-starter/paper/launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mac/AI/qlib-ashare-starter/paper/launchd.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mac/AI/qlib-ashare-starter</string>
+</dict>
+</plist>

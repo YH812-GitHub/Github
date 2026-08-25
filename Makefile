@@ -8,7 +8,7 @@ DATA_END ?= 20260821
 # 文件存储 —— 用 mlflow 官方 opt-out 开关放行(替代方案: requirements 锁 mlflow<3)
 MLFLOW_ENV ?= MLFLOW_ALLOW_FILE_STORE=true
 
-.PHONY: setup fetch dump data train train10w signal analyze analyze10w all clean
+.PHONY: setup fetch dump data train train10w signal analyze analyze10w paper paper-status all clean
 
 setup:
 	uv venv --python 3.11 .venv
@@ -41,6 +41,15 @@ train10w:
 
 signal:
 	$(MLFLOW_ENV) $(PY) scripts/today_signal.py
+
+# 每日自动模拟盘: 收盘后增量抓数→打分→按真实收盘价模拟成交→逐日记账
+# 首次使用先: .venv/bin/python scripts/paper_trade.py --init
+paper:
+	$(MLFLOW_ENV) $(PY) scripts/paper_trade.py
+
+# 只打印模拟盘现状, 不入账不抓数
+paper-status:
+	$(MLFLOW_ENV) $(PY) scripts/paper_trade.py --status
 
 analyze:
 	$(MLFLOW_ENV) $(PY) scripts/analyze_recorder.py

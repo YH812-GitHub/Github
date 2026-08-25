@@ -10,6 +10,15 @@ reports/*.log
 reports/*.png
 reports/*.csv
 reports/*.pkl
+paper/
+
+# 模拟盘账本属用户本地运行状态, 不入库
+paper/state.json
+paper/equity.csv
+paper/trades.csv
+paper/replay_equity.csv
+paper/replay_trades.csv
+paper/launchd.log
 
 # 系统 / 编辑器
 .DS_Store
