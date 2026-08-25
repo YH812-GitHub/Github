@@ -11,9 +11,12 @@ POST legulegu.com/api/s/base-info/ 现返回 401(需站点会员)。故改用项
   单位已用贵州茅台2023年报核验：现金分红比例 308.76 即每10股308.76元(dps=30.876)，
   公告日股息率 2.03% 与公开资料一致。
 
-缓存策略: 每报告期一个 parquet 落在 paper/cache/, mtime 超 ttl 才重取——
-防限流且离线可复算。基本面为季度/年度低频数据，默认 ttl=30 天。
+缓存策略: 每数据集一个 parquet 落在 paper/cache/, mtime 超 ttl 才重取——
+防限流且离线可复算。bvps 为季度低频数据 ttl=30 天; 分红明细 ttl 单独缩至 7 天:
+6-7 月分红季除权除息日密集, 陈旧缓存会低估新除息股的 dv 因子(t14 复审实测
+TTL=30 最坏漏 191 笔/3.9% 已实施分红), 7 天窗口将该风险压到可忽略。
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -23,7 +26,8 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = ROOT / "paper" / "cache"
-TTL_DAYS = 30
+TTL_DAYS = 30        # yjbb 每股净资产(季度披露, 低频)
+TTL_FHPS_DAYS = 7    # 分红明细: 除权除息日密集期要求更高新鲜度(t14 建议)
 
 
 def _cache_read(name: str, ttl_days: int = TTL_DAYS):
@@ -85,10 +89,11 @@ def load_bvps(start_year: int = 2022, force: bool = False) -> pd.DataFrame:
 
 
 def load_dividends(start_year: int = 2022, force: bool = False) -> pd.DataFrame:
-    """现金分红事件长表: columns=[code6, ex_date, dps(元/股)], 仅实施分配。"""
+    """现金分红事件长表: columns=[code6, ex_date, dps(元/股)], 仅实施分配。
+    缓存 TTL=7 天(t14 建议): 分红季陈旧缓存会漏最近除息事件、低估 dv。"""
     name = "em_fhps_dps"
     if not force:
-        hit = _cache_read(name)
+        hit = _cache_read(name, ttl_days=TTL_FHPS_DAYS)
         if hit is not None:
             return hit
     import akshare as ak  # noqa: PLC0415
