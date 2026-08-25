@@ -19,6 +19,8 @@ AkShare(东方财富) ──► CSV(后复权) ──► Qlib bin 格式 ──�
 - ✅ `LightGBM` 模型 + 样本外 `IC/RankIC/ICIR` 评价
 - ✅ 组合回测：TopkDropout（持 30 只、每日换 3 只），计入佣金/印花税/滑点、±10% 涨跌停不可成交约束
 - ✅ 自动导出 IC 汇总、净值曲线 PNG、回测明细 CSV
+- ✅ 10 万账户专用口径：`make train10w`（Top8/换2）+ `make signal` 每日 Top-8 建仓清单（真实价一手工需资金）
+- ✅ 每日自动模拟盘：`make paper` 增量抓数→打分→真实收盘价整手模拟成交→逐日记账，同日重跑幂等；`--replay` 全区间自检；launchd 定时自动化（详见 `使用说明.md` §5 与 `PAPER_LOG.md`）
 
 ## 目录结构
 
@@ -31,7 +33,10 @@ qlib-ashare-starter/
 ├── scripts/
 │   ├── fetch_data.py            # AkShare 数据下载(成分股+指数)
 │   ├── dump_bin.py              # 微软官方转换脚本(vendored)
-│   └── analyze_recorder.py      # 从 mlruns 提取报告
+│   ├── analyze_recorder.py      # 从 mlruns 提取报告
+│   ├── today_signal.py          # 每日 Top-8 建仓信号(10万口径)
+│   └── paper_trade.py           # 每日自动模拟盘引擎(--init/--status/--replay/--strategy)
+├── deploy/                      # launchd 定时任务模板(paper 自动化)
 ├── reports/                     # 回测输出(git 忽略大文件)
 ├── data/                        # 行情数据(git 忽略)
 └── RESULTS.md                   # 最近一次运行的指标摘要
