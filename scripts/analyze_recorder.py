@@ -6,10 +6,19 @@
   - reports/portfolio_*.csv        组合回测相关对象(自动发现并导出 DataFrame)
   - reports/equity_curve.png       策略累计收益 vs 指数基准
 
+用法:
+    make analyze                        # 主实验 workflow
+    make analyze10w                     # 10万模拟盘实验 workflow_10w
+    .venv/bin/python scripts/analyze_recorder.py --experiment workflow_10w
+
+注意: 不同 experiment 的导出会互相覆盖 reports/ 下同名 CSV——
+     需要保留两版时请先备份或改用 --experiment 分别导出到不同目录(后续项)。
+
 设计上完全防御式：不依赖 qlib 内部对象命名，逐个尝试加载 pkl。
 """
 from __future__ import annotations
 
+import argparse
 import pickle
 from pathlib import Path
 
@@ -23,6 +32,11 @@ REPORTS = ROOT / "reports"
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="导出 qrun 实验产物为人类可读报告")
+    parser.add_argument("--experiment", default="workflow",
+                        help="实验名: 主实验=workflow, 10w模拟盘=workflow_10w")
+    args = parser.parse_args()
+
     REPORTS.mkdir(exist_ok=True)
     import qlib  # noqa: PLC0415
 
@@ -30,10 +44,10 @@ def main() -> None:
     qlib.init(provider_uri=str(ROOT / "data" / "qlib_data" / "cn_data"), region="cn")
     from qlib.workflow import R  # noqa: PLC0415
 
-    exp = R.get_exp(experiment_name="workflow")
+    exp = R.get_exp(experiment_name=args.experiment)
     recorders = exp.list_recorders()
     if not recorders:
-        raise SystemExit("未找到任何 recorder, 请先运行 make train")
+        raise SystemExit(f"实验 {args.experiment} 未找到任何 recorder, 请先运行对应的 make train / make train10w")
     # 优先取状态为 FINISHED 的 recorder(排除崩溃残留 run), 再按开始时间取最新
     finished = [r for r in recorders.values()
                 if "FINISHED" in str(getattr(r, "status", "")).upper()]

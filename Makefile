@@ -8,7 +8,7 @@ DATA_END ?= 20260821
 # 文件存储 —— 用 mlflow 官方 opt-out 开关放行(替代方案: requirements 锁 mlflow<3)
 MLFLOW_ENV ?= MLFLOW_ALLOW_FILE_STORE=true
 
-.PHONY: setup fetch dump data train analyze all clean
+.PHONY: setup fetch dump data train train10w signal analyze analyze10w all clean
 
 setup:
 	uv venv --python 3.11 .venv
@@ -33,8 +33,22 @@ train:
 	@mkdir -p reports
 	bash -c 'set -o pipefail; $(MLFLOW_ENV) $(QRUN) config/workflow_lightgbm.yaml 2>&1 | tee reports/qrun_output.log'
 
+# 10万元模拟盘回测: 模型/数据与 train 完全一致, 仅账户规模与持仓数不同
+# 写入独立实验 workflow_10w(yaml 顶层 experiment_name), 与主实验产物隔离
+train10w:
+	@mkdir -p reports
+	bash -c 'set -o pipefail; $(MLFLOW_ENV) $(QRUN) config/workflow_lightgbm_10w.yaml 2>&1 | tee reports/qrun_output_10w.log'
+
+signal:
+	$(MLFLOW_ENV) $(PY) scripts/today_signal.py
+
 analyze:
 	$(MLFLOW_ENV) $(PY) scripts/analyze_recorder.py
+
+# 10w 实验独立导出(experiment_name=workflow_10w, 与主实验 recorder 互不混淆)
+# 注意: 两版导出仍写同一 reports/ 目录, 需要并存时先备份
+analyze10w:
+	$(MLFLOW_ENV) $(PY) scripts/analyze_recorder.py --experiment workflow_10w
 
 all: setup data train analyze
 

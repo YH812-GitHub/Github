@@ -1,0 +1,123 @@
+# =============================================================================
+# A股 Alpha158 + LightGBM 因子选股实验配置 (由 qrun 加载)
+#
+# 【10万元模拟盘版】与 workflow_lightgbm.yaml 唯一差异:
+#   - backtest.account: 100000000 -> 100000
+#   - strategy: topk 30->8, n_drop 3->2 (每只约1.25万, 一手100股下覆盖绝大多数标的)
+#   模型/特征/切分/成本参数完全一致, 保证两版结果可直接对比。
+#
+# 时间切分 (滚动前推的最小演示版):
+#   训练  2021-01-01 ~ 2024-12-31   (4年, 含拟合期 fit_start/fit_end)
+#   验证  2025-01-01 ~ 2025-06-30
+#   测试  2025-07-01 ~ 2026-08-21   (约14个月纯样本外)
+#
+# 注意: 数据起始 2020-09-01, 比 train 提前约 4 个月, 用于满足 Alpha158
+#       最长 60 日窗口的回看需求。
+#       market=csi300 使用 instruments/csi300.txt(由 make dump 后处理生成,
+#       已剔除基准指数 SH000300, 避免指数混入选股池)。
+# =============================================================================
+qlib_init:
+    provider_uri: "./data/qlib_data/cn_data"
+    region: cn
+
+market: &market csi300
+benchmark: &benchmark SH000300
+
+# 独立实验名: 与主实验(workflow)隔离, 避免 make analyze 取错 recorder、reports 主 CSV 被覆盖
+# (qlib.cli.run.workflow 原生支持顶层 experiment_name 覆盖, 见 run.py:145)
+experiment_name: workflow_10w
+
+data_handler_config: &data_handler_config
+    start_time: 2020-09-01
+    end_time: 2026-08-21
+    fit_start_time: 2021-01-01
+    fit_end_time: 2024-12-31
+    instruments: *market
+    infer_processors:
+        - class: RobustZScoreNorm
+          kwargs:
+              fields_group: feature
+              clip_outlier: true
+        - class: Fillna
+          kwargs:
+              fields_group: feature
+    learn_processors:
+        - class: DropnaLabel
+        - class: CSRankNorm
+          kwargs:
+              fields_group: label
+    label: ["Ref($close, -2) / Ref($close, -1) - 1"]
+
+port_analysis_config: &port_analysis_config
+    executor:
+        class: SimulatorExecutor
+        module_path: qlib.backtest.executor
+        kwargs:
+            time_per_step: day
+            generate_portfolio_metrics: true
+    strategy:
+        class: TopkDropoutStrategy
+        module_path: qlib.contrib.strategy.signal_strategy
+        kwargs:
+            signal: <PRED>
+            topk: 8                      # 10万账户: 每只约1.25万, 一手100股可覆盖绝大多数标的
+            n_drop: 2
+    backtest:
+        start_time: 2025-07-01
+        end_time: 2026-08-21
+        account: 100000                  # 10万元模拟盘
+        benchmark: *benchmark
+        exchange_kwargs:
+            limit_threshold: 0.095      # 近似涨跌停不可成交(创业板/科创板±20%会被保守误禁, 方向安全)
+            deal_price: close
+            open_cost: 0.0013           # 买入: 佣金+滑点
+            close_cost: 0.0023          # 卖出: 佣金+印花税+滑点
+            min_cost: 5
+
+task:
+    model:
+        class: LGBModel
+        module_path: qlib.contrib.model.gbdt
+        kwargs:
+            loss: mse
+            colsample_bytree: 0.8879
+            gamma: 1
+            learning_rate: 0.0421
+            max_depth: 6
+            n_estimators: 400
+            num_leaves: 128
+            num_threads: 4
+            objective: regression
+            reg_alpha: 6.95e-05
+            reg_lambda: 0.36
+            subsample: 0.8789
+            subsample_freq: 1
+            verbosity: -1
+    dataset:
+        class: DatasetH
+        module_path: qlib.data.dataset
+        kwargs:
+            handler:
+                class: Alpha158
+                module_path: qlib.contrib.data.handler
+                kwargs: *data_handler_config
+            segments:
+                train: [2021-01-01, 2024-12-31]
+                valid: [2025-01-01, 2025-06-30]
+                test:  [2025-07-01, 2026-08-21]
+
+    # qrun 只消费 config["task"]["record"] —— 必须嵌在 task 下, 与 model/dataset 平级
+    record:
+        - class: SignalRecord
+          module_path: qlib.workflow.record_temp
+          kwargs:
+              model: <MODEL>          # 缺此行则 SignalRecord(model=None) 静默初始化, generate 时 AttributeError（对照官方 lightgbm Alpha158 模板）
+              dataset: <DATASET>
+        - class: SigAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs:
+              ann_scaler: 250
+        - class: PortAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs:
+              config: *port_analysis_config
